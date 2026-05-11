@@ -1,4 +1,4 @@
-# SynthUX Audrey II ported to the Daisy Patch.init()
+# Daisy Patch.init() port of the SynthUX Audrey II Feedback Synth
 
 ## Project / Code Ported by
 
@@ -6,7 +6,13 @@ Ryan Trommmer
 
 ## Description
 
-<!-- Describe your example here -->
+Reconfigured controls for the Patch.init()
+Allowed CV inputs for primary controls
+
+## To do
+
+Add proper 1v/oct freq tracking and calibration
+
 ## License
 
 This project is licensed under the MIT License. See LICENSE for details.
