@@ -12,7 +12,10 @@ Reconfigured controls to work with the Patch.init(), added CV control for primar
 | CV_2 | C4 | Feedback | Feedback amount; mix of audio input and feedback |
 | CV_3 | C3 | LP/HP filter | Both filters are active in the feedback path; control sweeps the frequency of low and high pass filters |
 | CV_4 | C2 | Delay > Feedback | Mixes delay amount and delay time into the feedback path |
-| CV_5 | C6 | 1V/Oct Input | Pitch tracking input |
+| CV_5 | C6 | 1V/Oct Input | Pitch tracking input (WIP; not perfectly calibrated yet) |
+| CV_6 | C7 | Feedback CV | (adds to feedback pot) |
+| CV_7 | C8 | Filter CV | (adds to filter pot) |
+| CV_8 | C9 | Delay CV | (adds to delay pot) |
 
 ## To do
 
