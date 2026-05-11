@@ -16,6 +16,7 @@ Reconfigured controls to work with the Patch.init(), added CV control for primar
 | CV_6 | C7 | Feedback CV | (adds to feedback pot) |
 | CV_7 | C8 | Filter CV | (adds to filter pot) |
 | CV_8 | C9 | Delay CV | (adds to delay pot) |
+| B_8 | B8 | Warp Toggle | Doubles / Halves delay time|
 
 ## To do
 
