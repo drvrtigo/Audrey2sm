@@ -1,9 +1,5 @@
 # Daisy Patch.init() port of the SynthUX Audrey II Feedback Synth
 
-## Project / Code Ported by
-
-Ryan Trommmer
-
 ## Description
 
 Reconfigured controls for the Patch.init()
