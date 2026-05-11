@@ -2,8 +2,7 @@
 
 ## Description
 
-Reconfigured controls for the Patch.init()
-Allowed CV inputs for primary controls
+Reconfigured controls to work with the Patch.init(), and added CV inputs for primary controls
 
 ## To do
 
