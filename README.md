@@ -20,6 +20,8 @@ Reconfigured controls to work with the Patch.init(), added CV control for primar
 
 ## To do
 
+Cleanup!
+
 Add proper 1v/oct freq tracking and calibration
 
 ## License
