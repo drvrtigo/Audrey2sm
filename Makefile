@@ -6,7 +6,10 @@ CPP_SOURCES = Audrey2sm.cpp \
               src/FeedbackSynthEngine.cpp \
               src/BiquadFilters.cpp \
               src/KarplusString.cpp \
-			  src/PitchCalibration.cpp \
+			  src/calibration/calibration_data.cpp \
+              src/calibration/calibration_processor.cpp \
+              src/calibration/calibration_runtime.cpp \
+              src/calibration/calibration_store.cpp \
 			  src/memory/sdram_alloc.cpp
 
 
