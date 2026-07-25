@@ -7,7 +7,7 @@ namespace calib
 using daisy::patch_sm::DaisyPatchSM;
 
 constexpr uint32_t MAGIC   = 0x43414C32;
-constexpr uint32_t VERSION = 2;
+constexpr uint32_t VERSION = 3;
 
 constexpr int NUM_KNOBS     = 4;
 constexpr int NUM_CVS       = 4;

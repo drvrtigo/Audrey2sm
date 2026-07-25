@@ -1,4 +1,10 @@
 // main.cpp — Audrey II-style feedback synth on Daisy Patch Submodule
+// Debug build: boot-time LED blink indicates calibration state.
+//
+// Blink codes:
+// 1 blink = invalid / unknown calibration
+// 2 blinks = valid factory calibration
+// 3 blinks = valid user calibration
 
 #include "daisy_patch_sm.h"
 #include "daisysp.h"
@@ -10,11 +16,26 @@ using namespace daisy::patch_sm;
 using namespace daisysp;
 using namespace infrasonic;
 
-// Audio settings
+// ------------------------------------------------------------
+// Config
+// ------------------------------------------------------------
+
 static const auto   kSampleRate = SaiHandle::Config::SampleRate::SAI_48KHZ;
 static const size_t kBlockSize  = 4;
 
-// Hardware and DSP objects
+#define CAL_DEBUG_LED 1
+
+// 0V reference pitch = C3
+static constexpr float kPitchBaseHz = 130.81278f;
+
+// CV_1 coarse pitch range in octaves, centered at 0 when knob = 0.5
+static constexpr float kPitchKnobMinOct = -2.0f;
+static constexpr float kPitchKnobMaxOct =  2.0f;
+
+// ------------------------------------------------------------
+// Globals
+// ------------------------------------------------------------
+
 static DaisyPatchSM              hw;
 static FeedbackSynth::Engine     engine;
 static Limiter                   limiter[2];
@@ -23,9 +44,9 @@ static calib::CalibrationRuntime calib_rt(hw);
 
 static float led_env = 0.0f;
 
-// Pitch CV cleanup
-static constexpr float kPitchCvDeadbandVolts = 0.015f; // ~15 mV deadband near 0V
-static constexpr float kPitchCvOffsetVolts   = 0.000f; // manual trim if needed after testing
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
 
 static inline float Clamp(float x, float lo, float hi)
 {
@@ -48,22 +69,32 @@ static inline float SmoothEnv(float in, float state, float coeff)
     return state + coeff * (in - state);
 }
 
-static inline float ApplyDeadband(float x, float deadband)
+#if CAL_DEBUG_LED
+static inline void SetDebugLed(float norm)
 {
-    if(fabsf(x) <= deadband)
-        return 0.0f;
-
-    if(x > 0.0f)
-        return x - deadband;
-
-    return x + deadband;
+    hw.WriteCvOut(CV_OUT_2, fclamp(norm, 0.0f, 1.0f) * 5.0f);
 }
 
-static inline float CleanPitchCvVolts(float volts)
+static void BlinkDebugLed(int count,
+                          int on_ms  = 140,
+                          int off_ms = 140,
+                          int gap_ms = 500)
 {
-    volts += kPitchCvOffsetVolts;
-    return ApplyDeadband(volts, kPitchCvDeadbandVolts);
+    for(int i = 0; i < count; ++i)
+    {
+        SetDebugLed(1.0f);
+        System::Delay(on_ms);
+        SetDebugLed(0.0f);
+        System::Delay(off_ms);
+    }
+
+    System::Delay(gap_ms);
 }
+#endif
+
+// ------------------------------------------------------------
+// Audio
+// ------------------------------------------------------------
 
 static void AudioCallback(AudioHandle::InputBuffer in,
                           AudioHandle::OutputBuffer out,
@@ -79,27 +110,25 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     const float k_space = calib_rt.GetKnob01(CV_4);
 
     // Calibrated external CVs
-    float cv_pitch_v = calib_rt.GetCvVolts(CV_5);
-    const float cv_feed_n  = calib_rt.GetCvNorm(CV_6);  // -1..1
-    const float cv_body_n  = calib_rt.GetCvNorm(CV_7);  // -1..1
-    const float cv_space_n = calib_rt.GetCvNorm(CV_8);  // -1..1
+    const float cv_feed  = calib_rt.GetCvNorm(CV_6);   // -1..1
+    const float cv_body  = calib_rt.GetCvNorm(CV_7);   // -1..1
+    const float cv_space = calib_rt.GetCvNorm(CV_8);   // -1..1
 
-    // Clean pitch CV around 0V to reduce idle detune
-    cv_pitch_v = CleanPitchCvVolts(cv_pitch_v);
+    // --- Pitch ---
+    // CV_1: coarse octave offset around C3
+    // CV_5: calibrated 1V/oct pitch input
+    const float coarse_oct = Map0To1(k_pitch, kPitchKnobMinOct, kPitchKnobMaxOct);
+    const float pitch_hz   = calib_rt.GetPitchHz(CV_5, kPitchBaseHz, coarse_oct);
 
-    // Pitch: knob sets base MIDI note number, CV_5 adds 1V/oct offset
-    const float base_note  = Map0To1(k_pitch, 16.0f, 72.0f);
-    float       pitch_note = base_note + (12.0f * cv_pitch_v);
-    pitch_note             = Clamp(pitch_note, 0.0f, 127.0f);
-    engine.SetStringPitch(pitch_note);
+    engine.SetStringPitchHz(pitch_hz);
 
-    // Feedback gain in dBFS
-    const float fb_norm = Clamp(k_feed + 0.25f * cv_feed_n, 0.0f, 1.0f);
+    // --- Feedback gain in dBFS ---
+    const float fb_norm = Clamp(k_feed + 0.25f * cv_feed, 0.0f, 1.0f);
     const float fb_db   = Map0To1(fb_norm, -30.0f, 12.0f);
     engine.SetFeedbackGain(fb_db);
 
-    // Body / delay / tone
-    const float body_norm = Clamp(k_body + 0.25f * cv_body_n, 0.0f, 1.0f);
+    // --- Body / delay / tone ---
+    const float body_norm = Clamp(k_body + 0.25f * cv_body, 0.0f, 1.0f);
     const float fb_delay  = Map0To1(body_norm, 0.001f, 0.1f);
     engine.SetFeedbackDelay(fb_delay);
 
@@ -109,13 +138,15 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     const float hpf_hz = Map0To1Exp(body_norm, 10.0f, 3000.0f);
     engine.SetFeedbackHPFCutoff(hpf_hz);
 
-    // Space / reverb / echo
-    const float space_norm = Clamp(k_space + 0.25f * cv_space_n, 0.0f, 1.0f);
+    // --- Space / reverb / echo ---
+    const float space_norm = Clamp(k_space + 0.25f * cv_space, 0.0f, 1.0f);
     engine.SetReverbMix(space_norm);
     engine.SetReverbFeedback(Map0To1(space_norm, 0.2f, 1.0f));
     engine.SetEchoDelaySendAmount(space_norm);
 
     float echo_time = Map0To1(space_norm, 0.05f, 2.0f);
+
+    // B8 switch: half-time delay when pressed
     const float delay_scale = delay_sw.Pressed() ? 0.5f : 1.0f;
     echo_time *= delay_scale;
     engine.SetEchoDelayTime(echo_time);
@@ -149,10 +180,19 @@ static void AudioCallback(AudioHandle::InputBuffer in,
 
     led_env = SmoothEnv(peak, led_env, 0.1f);
 
-    // patch.Init CV outs are 0–5V; using CV_OUT_2 here as an LED driver
+#if !CAL_DEBUG_LED
     const float led_level = sqrtf(Clamp(led_env * 2.0f, 0.0f, 1.0f));
     hw.WriteCvOut(CV_OUT_2, led_level * 3.0f);
+#else
+    // In debug build, keep the normal runtime LED meter enabled after boot.
+    const float led_level = sqrtf(Clamp(led_env * 2.0f, 0.0f, 1.0f));
+    hw.WriteCvOut(CV_OUT_2, led_level * 3.0f);
+#endif
 }
+
+// ------------------------------------------------------------
+// Main
+// ------------------------------------------------------------
 
 int main(void)
 {
@@ -161,6 +201,42 @@ int main(void)
     hw.SetAudioBlockSize(kBlockSize);
 
     calib_rt.Init();
+
+#if CAL_DEBUG_LED
+    const bool cal_valid = calib_rt.IsValid();
+    const bool cal_user  = calib_rt.IsUserCalibration();
+    const auto cal_state = calib_rt.State();
+
+    (void)cal_user; // cal_user is redundant with cal_state, but useful while debugging
+
+    if(!cal_valid)
+    {
+        // Invalid or unreadable calibration
+        BlinkDebugLed(1, 350, 350, 700);
+    }
+    else
+    {
+        switch(cal_state)
+        {
+            case daisy::PersistentStorage<calib::CalibrationData>::State::USER:
+                BlinkDebugLed(3, 90, 90, 700);
+                break;
+
+            case daisy::PersistentStorage<calib::CalibrationData>::State::FACTORY:
+                BlinkDebugLed(2, 180, 180, 700);
+                break;
+
+            case daisy::PersistentStorage<calib::CalibrationData>::State::UNKNOWN:
+            default:
+                BlinkDebugLed(1, 350, 350, 700);
+                break;
+        }
+    }
+
+    SetDebugLed(0.0f);
+#endif
+
+    // patch.Init toggle switch on B8
     delay_sw.Init(hw.B8);
 
     engine.Init(hw.AudioSampleRate());

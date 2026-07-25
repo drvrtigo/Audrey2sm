@@ -56,6 +56,12 @@ void Engine::SetStringPitch(const float nn) {
   strings_[1].SetFreq(freq);
 }
 
+void Engine::SetStringPitchHz(const float hz) {
+  const float safe_hz = fmaxf(hz, 10.0f);
+  strings_[0].SetFreq(safe_hz);
+  strings_[1].SetFreq(safe_hz);
+}
+
 void Engine::SetFeedbackGain(const float gain_db) {
   fb_gain_ = dbfs2lin(gain_db);
 }

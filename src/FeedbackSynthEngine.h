@@ -25,6 +25,7 @@ class Engine {
         void Init(const float sample_rate);
 
         void SetStringPitch(const float nn);
+        void SetStringPitchHz(const float hz);
 
         void SetFeedbackGain(const float gain_dbfs);
 
