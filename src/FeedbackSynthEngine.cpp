@@ -94,6 +94,11 @@ void Engine::SetEchoDelaySendAmount(const float echo_send) {
   echo_send_ = echo_send;
 }
 
+void Engine::SetEchoDelayLagTime(const float lag_time_s) {
+  echo_delay_[0]->SetLagTime(lag_time_s);
+  echo_delay_[1]->SetLagTime(lag_time_s);
+}
+
 void Engine::SetReverbMix(const float mix) {
   verb_mix_ = fclamp(mix, 0.0f, 1.0f);
 }

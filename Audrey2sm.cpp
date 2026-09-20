@@ -39,10 +39,41 @@ static constexpr float kPitchKnobMaxOct =  2.0f;
 static DaisyPatchSM              hw;
 static FeedbackSynth::Engine     engine;
 static Limiter                   limiter[2];
-static Switch                    delay_sw;
+static Switch                    delay_button;
+static Switch                    layer_toggle;
 static calib::CalibrationRuntime calib_rt(hw);
 
 static float led_env = 0.0f;
+
+struct ControlState
+{
+    // Layer 1: Voice
+    float frequency = 0.5f;
+    float body = 0.5f;
+    float feedback = 0.5f;
+    float space = 0.5f;
+
+    // Layer 2: Loop shaping
+    float lpf_cutoff = 0.5f;
+    float hpf_cutoff = 0.5f;
+    float reverb_mix = 0.5f;
+    float reverb_feedback = 0.5f;
+
+    // Layer 3: Echo delay
+    float echo_time = 0.5f;
+    float echo_feedback = 0.5f;
+    float echo_send = 0.5f;
+    float echo_character = 0.5f;
+};
+
+static ControlState controls;
+
+enum class ControlLayer
+{
+    Voice,
+    LoopShaping,
+    Delay,
+};
 
 // ------------------------------------------------------------
 // Helpers
@@ -67,6 +98,15 @@ static inline float Map0To1Exp(float norm, float min, float max)
 static inline float SmoothEnv(float in, float state, float coeff)
 {
     return state + coeff * (in - state);
+}
+
+static inline ControlLayer GetActiveLayer()
+{
+    if(delay_button.Pressed())
+        return ControlLayer::Delay;
+
+    return layer_toggle.Pressed() ? ControlLayer::LoopShaping
+                                  : ControlLayer::Voice;
 }
 
 #if CAL_DEBUG_LED
@@ -101,58 +141,83 @@ static void AudioCallback(AudioHandle::InputBuffer in,
                           size_t size)
 {
     hw.ProcessAnalogControls();
-    delay_sw.Debounce();
+    delay_button.Debounce();
+    layer_toggle.Debounce();
 
     // Calibrated panel knobs: 0..1
-    const float k_pitch = calib_rt.GetKnob01(CV_1);
-    const float k_feed  = calib_rt.GetKnob01(CV_2);
-    const float k_body  = calib_rt.GetKnob01(CV_3);
-    const float k_space = calib_rt.GetKnob01(CV_4);
+    const float p1 = calib_rt.GetKnob01(CV_1);
+    const float p2 = calib_rt.GetKnob01(CV_2);
+    const float p3 = calib_rt.GetKnob01(CV_3);
+    const float p4 = calib_rt.GetKnob01(CV_4);
 
-    // Calibrated external CVs
-    const float cv_feed  = calib_rt.GetCvNorm(CV_6);   // -1..1
-    const float cv_body  = calib_rt.GetCvNorm(CV_7);   // -1..1
-    const float cv_space = calib_rt.GetCvNorm(CV_8);   // -1..1
+    // Fixed calibrated external CV routing: Body, Feedback, Space.
+    const float cv_body  = calib_rt.GetCvNorm(CV_6); // -1..1
+    const float cv_feed  = calib_rt.GetCvNorm(CV_7); // -1..1
+    const float cv_space = calib_rt.GetCvNorm(CV_8); // -1..1
+
+    switch(GetActiveLayer())
+    {
+        case ControlLayer::Voice:
+            controls.frequency = p1;
+            controls.body = Clamp(p2 + 0.25f * cv_body, 0.0f, 1.0f);
+            controls.feedback = Clamp(p3 + 0.25f * cv_feed, 0.0f, 1.0f);
+            controls.space = Clamp(p4 + 0.25f * cv_space, 0.0f, 1.0f);
+            break;
+
+        case ControlLayer::LoopShaping:
+            controls.lpf_cutoff = p1;
+            controls.hpf_cutoff = p2;
+            controls.reverb_mix = p3;
+            controls.reverb_feedback = p4;
+            break;
+
+        case ControlLayer::Delay:
+            controls.echo_time = p1;
+            controls.echo_feedback = p2;
+            controls.echo_send = p3;
+            controls.echo_character = p4;
+            break;
+    }
 
     // --- Pitch ---
     // CV_1: coarse octave offset around C3
     // CV_5: calibrated 1V/oct pitch input
-    const float coarse_oct = Map0To1(k_pitch, kPitchKnobMinOct, kPitchKnobMaxOct);
-    const float pitch_hz   = calib_rt.GetPitchHz(CV_5, kPitchBaseHz, coarse_oct);
-
+    const float coarse_oct = Map0To1(controls.frequency,
+                                     kPitchKnobMinOct,
+                                     kPitchKnobMaxOct);
+    const float pitch_hz = calib_rt.GetPitchHz(CV_5,
+                                                kPitchBaseHz,
+                                                coarse_oct);
     engine.SetStringPitchHz(pitch_hz);
 
-    // --- Feedback gain in dBFS ---
-    const float fb_norm = Clamp(k_feed + 0.25f * cv_feed, 0.0f, 1.0f);
-    const float fb_db   = Map0To1(fb_norm, -30.0f, 12.0f);
+    // --- Main feedback / body ---
+    const float fb_db = Map0To1(controls.feedback, -30.0f, 12.0f);
     engine.SetFeedbackGain(fb_db);
 
-    // --- Body / delay / tone ---
-    const float body_norm = Clamp(k_body + 0.25f * cv_body, 0.0f, 1.0f);
-    const float fb_delay  = Map0To1(body_norm, 0.001f, 0.1f);
+    const float fb_delay = Map0To1(controls.body, 0.001f, 0.1f);
     engine.SetFeedbackDelay(fb_delay);
 
-    const float lpf_hz = Map0To1Exp(body_norm, 200.0f, 16000.0f);
+    // --- Loop shaping ---
+    const float lpf_hz = Map0To1Exp(controls.lpf_cutoff, 200.0f, 16000.0f);
+    const float hpf_hz = Map0To1Exp(controls.hpf_cutoff, 10.0f, 3000.0f);
     engine.SetFeedbackLPFCutoff(lpf_hz);
-
-    const float hpf_hz = Map0To1Exp(body_norm, 10.0f, 3000.0f);
     engine.SetFeedbackHPFCutoff(hpf_hz);
 
-    // --- Space / reverb / echo ---
-    const float space_norm = Clamp(k_space + 0.25f * cv_space, 0.0f, 1.0f);
-    engine.SetReverbMix(space_norm);
-    engine.SetReverbFeedback(Map0To1(space_norm, 0.2f, 1.0f));
-    engine.SetEchoDelaySendAmount(space_norm);
+    engine.SetReverbMix(controls.reverb_mix);
+    engine.SetReverbFeedback(Map0To1(controls.reverb_feedback, 0.2f, 0.98f));
 
-    float echo_time = Map0To1(space_norm, 0.05f, 2.0f);
+    // --- Echo delay ---
+    // Space remains a macro for the existing normal-state signal path, while
+    // the held B7 delay layer provides direct access to each echo parameter.
+    const float echo_time = Map0To1(controls.echo_time, 0.05f, 2.0f);
+    const float echo_fb = Clamp(controls.echo_feedback, 0.0f, 1.0f);
+    const float echo_send = Clamp(controls.echo_send, 0.0f, 1.0f);
+    const float echo_lag = Map0To1(controls.echo_character, 0.005f, 0.5f);
 
-    // B8 switch: half-time delay when pressed
-    const float delay_scale = delay_sw.Pressed() ? 0.5f : 1.0f;
-    echo_time *= delay_scale;
     engine.SetEchoDelayTime(echo_time);
-
-    const float echo_fb = Clamp(fb_norm, 0.0f, 1.0f);
     engine.SetEchoDelayFeedback(echo_fb);
+    engine.SetEchoDelaySendAmount(echo_send);
+    engine.SetEchoDelayLagTime(echo_lag);
 
     engine.SetOutputLevel(0.5f);
 
@@ -236,8 +301,9 @@ int main(void)
     SetDebugLed(0.0f);
 #endif
 
-    // patch.Init toggle switch on B8
-    delay_sw.Init(hw.B8);
+    // B7 is the global held delay layer; B8 selects Voice/Loop Shaping.
+    delay_button.Init(hw.B7);
+    layer_toggle.Init(hw.B8);
 
     engine.Init(hw.AudioSampleRate());
 
