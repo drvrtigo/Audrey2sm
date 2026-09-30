@@ -3,6 +3,7 @@
 #include "daisysp.h"
 #include "src/FeedbackSynthEngine.h"
 #include "src/calibration/calibration_runtime.h"
+#include <cmath>
 
 using namespace daisy;
 using namespace daisy::patch_sm;
@@ -65,6 +66,12 @@ static inline float SmoothEnv(float in, float state, float coeff)
 {
     return state + coeff * (in - state);
 }
+static inline float Tension(float norm, float factor)
+{
+    norm = Clamp(norm, 0.0f, 1.0f);
+    if(factor == 0.0f) return norm;
+    return expm1f(norm * factor) / expm1f(factor);
+}
 static inline ControlLayer GetActiveLayer()
 {
     if(delay_button.Pressed()) return ControlLayer::Delay;
@@ -100,7 +107,6 @@ static void UpdatePots(ControlLayer layer, const float pot[4])
     GetLayerTargets(layer, targets);
     if(!pickup_initialized)
     {
-        // On boot, let the selected page follow the actual panel positions.
         for(int i = 0; i < 4; ++i)
         {
             *targets[i] = pot[i];
@@ -113,7 +119,6 @@ static void UpdatePots(ControlLayer layer, const float pot[4])
     }
     if(layer != last_layer)
     {
-        // Freeze all stored targets when changing pages, including B7 release.
         for(int i = 0; i < 4; ++i)
         {
             picked_up[i] = false;
@@ -156,14 +161,12 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
     hw.ProcessAnalogControls();
     delay_button.Debounce();
     layer_toggle.Debounce();
-
     const float pot[4] = {
         calib_rt.GetKnob01(CV_1), calib_rt.GetKnob01(CV_2),
         calib_rt.GetKnob01(CV_3), calib_rt.GetKnob01(CV_4)
     };
     UpdatePots(GetActiveLayer(), pot);
 
-    // Keep CV live and independent of page pickup.
     const float body_norm = Clamp(controls.body + 0.25f * calib_rt.GetCvNorm(CV_6), 0.0f, 1.0f);
     const float lp_norm = Clamp(controls.lpf_cutoff + 0.25f * calib_rt.GetCvNorm(CV_7), 0.0f, 1.0f);
     const float hp_norm = Clamp(controls.hpf_cutoff + 0.25f * calib_rt.GetCvNorm(CV_8), 0.0f, 1.0f);
@@ -172,16 +175,16 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
     const float pitch_hz = calib_rt.GetPitchHz(CV_5, kPitchBaseHz, coarse_oct);
     engine.SetStringPitchHz(pitch_hz);
 
-    engine.SetFeedbackDelay(Map0To1(body_norm, 0.001f, 0.1f));
-    engine.SetFeedbackLPFCutoff(Map0To1Exp(lp_norm, 200.0f, 16000.0f));
-    engine.SetFeedbackHPFCutoff(Map0To1Exp(hp_norm, 10.0f, 3000.0f));
-    engine.SetDrive(controls.drive);
-    engine.SetFeedbackGain(Map0To1(controls.feedback, -30.0f, 12.0f));
+    engine.SetFeedbackDelay(daisysp::fmap(body_norm, 0.001f, 0.1f, daisysp::Mapping::EXP));
+    engine.SetFeedbackLPFCutoff(Map0To1Exp(lp_norm, 100.0f, 18000.0f));
+    engine.SetFeedbackHPFCutoff(Map0To1Exp(hp_norm, 10.0f, 4000.0f));
+    engine.SetDrive(Map0To1(controls.drive, 0.4f, 1.0f));
+    engine.SetFeedbackGain(Map0To1(controls.feedback, -60.0f, 12.0f));
     engine.SetReverbMix(controls.reverb_mix);
-    engine.SetReverbFeedback(Map0To1(controls.reverb_feedback, 0.2f, 0.98f));
-    engine.SetEchoDelayTime(Map0To1(controls.echo_time, 0.05f, 2.0f));
-    engine.SetEchoDelayFeedback(Clamp(controls.echo_feedback, 0.0f, 1.0f));
-    engine.SetEchoDelaySendAmount(Clamp(controls.echo_send, 0.0f, 1.0f));
+    engine.SetReverbFeedback(Map0To1(Tension(controls.reverb_feedback, -3.0f), 0.2f, 1.0f));
+    engine.SetEchoDelayTime(daisysp::fmap(controls.echo_time, 0.05f, 5.0f, daisysp::Mapping::EXP));
+    engine.SetEchoDelayFeedback(Map0To1(controls.echo_feedback, 0.0f, 1.5f));
+    engine.SetEchoDelaySendAmount(daisysp::fmap(controls.echo_send, 0.0f, 1.0f, daisysp::Mapping::EXP));
     engine.SetEchoDelayLagTime(Map0To1(controls.echo_character, 0.005f, 0.5f));
     engine.SetOutputLevel(0.5f);
 
