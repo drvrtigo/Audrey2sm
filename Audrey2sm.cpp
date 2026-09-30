@@ -29,8 +29,8 @@ static const size_t kBlockSize  = 4;
 static constexpr float kPitchBaseHz = 130.81278f;
 
 // CV_1 coarse pitch range in octaves, centered at 0 when knob = 0.5
-static constexpr float kPitchKnobMinOct = -2.0f;
-static constexpr float kPitchKnobMaxOct =  2.0f;
+static constexpr float kPitchKnobMinOct = -1.0f;
+static constexpr float kPitchKnobMaxOct =  1.0f;
 
 // ------------------------------------------------------------
 // Globals
