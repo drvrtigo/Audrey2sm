@@ -15,6 +15,7 @@ static const size_t kBlockSize = 4;
 static constexpr float kPitchBaseHz = 130.81278f;
 static constexpr float kPitchKnobMinOct = -1.0f;
 static constexpr float kPitchKnobMaxOct = 1.0f;
+static constexpr float kPickupTolerance = 0.015f;
 
 static DaisyPatchSM hw;
 static FeedbackSynth::Engine engine;
@@ -42,6 +43,11 @@ struct ControlState
 static ControlState controls;
 
 enum class ControlLayer { Voice, LoopShaping, Delay };
+static ControlLayer last_layer = ControlLayer::Voice;
+static bool pickup_initialized = false;
+static bool picked_up[4] = {};
+static float previous_pot[4] = {};
+
 static inline float Clamp(float x, float lo, float hi)
 {
     return x < lo ? lo : (x > hi ? hi : x);
@@ -63,6 +69,69 @@ static inline ControlLayer GetActiveLayer()
 {
     if(delay_button.Pressed()) return ControlLayer::Delay;
     return layer_toggle.Pressed() ? ControlLayer::LoopShaping : ControlLayer::Voice;
+}
+static void GetLayerTargets(ControlLayer layer, float* targets[4])
+{
+    switch(layer)
+    {
+        case ControlLayer::Voice:
+            targets[0] = &controls.frequency;
+            targets[1] = &controls.body;
+            targets[2] = &controls.lpf_cutoff;
+            targets[3] = &controls.hpf_cutoff;
+            break;
+        case ControlLayer::LoopShaping:
+            targets[0] = &controls.drive;
+            targets[1] = &controls.feedback;
+            targets[2] = &controls.reverb_mix;
+            targets[3] = &controls.reverb_feedback;
+            break;
+        case ControlLayer::Delay:
+            targets[0] = &controls.echo_time;
+            targets[1] = &controls.echo_feedback;
+            targets[2] = &controls.echo_send;
+            targets[3] = &controls.echo_character;
+            break;
+    }
+}
+static void UpdatePots(ControlLayer layer, const float pot[4])
+{
+    float* targets[4] = {};
+    GetLayerTargets(layer, targets);
+    if(!pickup_initialized)
+    {
+        // On boot, let the selected page follow the actual panel positions.
+        for(int i = 0; i < 4; ++i)
+        {
+            *targets[i] = pot[i];
+            picked_up[i] = true;
+            previous_pot[i] = pot[i];
+        }
+        last_layer = layer;
+        pickup_initialized = true;
+        return;
+    }
+    if(layer != last_layer)
+    {
+        // Freeze all stored targets when changing pages, including B7 release.
+        for(int i = 0; i < 4; ++i)
+        {
+            picked_up[i] = false;
+            previous_pot[i] = pot[i];
+        }
+        last_layer = layer;
+        return;
+    }
+    for(int i = 0; i < 4; ++i)
+    {
+        const float target = *targets[i];
+        const bool near = fabsf(pot[i] - target) <= kPickupTolerance;
+        const bool crossed = (previous_pot[i] <= target && pot[i] >= target)
+                          || (previous_pot[i] >= target && pot[i] <= target);
+        if(!picked_up[i] && (near || crossed)) picked_up[i] = true;
+        if(picked_up[i]) *targets[i] = pot[i];
+        previous_pot[i] = pot[i];
+    }
 }
 #if CAL_DEBUG_LED
 static inline void SetDebugLed(float norm)
@@ -88,34 +157,13 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
     delay_button.Debounce();
     layer_toggle.Debounce();
 
-    const float p1 = calib_rt.GetKnob01(CV_1);
-    const float p2 = calib_rt.GetKnob01(CV_2);
-    const float p3 = calib_rt.GetKnob01(CV_3);
-    const float p4 = calib_rt.GetKnob01(CV_4);
+    const float pot[4] = {
+        calib_rt.GetKnob01(CV_1), calib_rt.GetKnob01(CV_2),
+        calib_rt.GetKnob01(CV_3), calib_rt.GetKnob01(CV_4)
+    };
+    UpdatePots(GetActiveLayer(), pot);
 
-    switch(GetActiveLayer())
-    {
-        case ControlLayer::Voice:
-            controls.frequency = p1;
-            controls.body = p2;
-            controls.lpf_cutoff = p3;
-            controls.hpf_cutoff = p4;
-            break;
-        case ControlLayer::LoopShaping:
-            controls.drive = p1;
-            controls.feedback = p2;
-            controls.reverb_mix = p3;
-            controls.reverb_feedback = p4;
-            break;
-        case ControlLayer::Delay:
-            controls.echo_time = p1;
-            controls.echo_feedback = p2;
-            controls.echo_send = p3;
-            controls.echo_character = p4;
-            break;
-    }
-
-    // CV is applied after page selection so modulation never freezes on another page.
+    // Keep CV live and independent of page pickup.
     const float body_norm = Clamp(controls.body + 0.25f * calib_rt.GetCvNorm(CV_6), 0.0f, 1.0f);
     const float lp_norm = Clamp(controls.lpf_cutoff + 0.25f * calib_rt.GetCvNorm(CV_7), 0.0f, 1.0f);
     const float hp_norm = Clamp(controls.hpf_cutoff + 0.25f * calib_rt.GetCvNorm(CV_8), 0.0f, 1.0f);
