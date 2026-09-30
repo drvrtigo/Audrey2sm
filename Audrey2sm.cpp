@@ -17,6 +17,8 @@ static constexpr float kPitchBaseHz = 130.81278f;
 static constexpr float kPitchKnobMinOct = -1.0f;
 static constexpr float kPitchKnobMaxOct = 1.0f;
 static constexpr float kPickupTolerance = 0.015f;
+static constexpr uint32_t kLedOffBlocks = 300;
+static constexpr uint32_t kLedOnBlocks = 540;
 
 static DaisyPatchSM hw;
 static FeedbackSynth::Engine engine;
@@ -25,6 +27,7 @@ static Switch delay_button;
 static Switch layer_toggle;
 static calib::CalibrationRuntime calib_rt(hw);
 static float led_env = 0.0f;
+static uint32_t pickup_led_blocks = 0;
 
 struct ControlState
 {
@@ -133,7 +136,11 @@ static void UpdatePots(ControlLayer layer, const float pot[4])
         const bool near = fabsf(pot[i] - target) <= kPickupTolerance;
         const bool crossed = (previous_pot[i] <= target && pot[i] >= target)
                           || (previous_pot[i] >= target && pot[i] <= target);
-        if(!picked_up[i] && (near || crossed)) picked_up[i] = true;
+        if(!picked_up[i] && (near || crossed))
+        {
+            picked_up[i] = true;
+            pickup_led_blocks = kLedOffBlocks + kLedOnBlocks;
+        }
         if(picked_up[i]) *targets[i] = pot[i];
         previous_pot[i] = pot[i];
     }
@@ -204,7 +211,16 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
     limiter[1].ProcessBlock(OUT_R, size, 0.7f);
     led_env = SmoothEnv(peak, led_env, 0.1f);
     const float led_level = sqrtf(Clamp(led_env * 2.0f, 0.0f, 1.0f));
-    hw.WriteCvOut(CV_OUT_2, led_level * 3.0f);
+    if(pickup_led_blocks > 0)
+    {
+        const bool dark_phase = pickup_led_blocks > kLedOnBlocks;
+        hw.WriteCvOut(CV_OUT_2, dark_phase ? 0.0f : 5.0f);
+        --pickup_led_blocks;
+    }
+    else
+    {
+        hw.WriteCvOut(CV_OUT_2, led_level * 3.0f);
+    }
 }
 
 int main(void)
