@@ -178,7 +178,7 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
     engine.SetFeedbackDelay(daisysp::fmap(body_norm, 0.001f, 0.1f, daisysp::Mapping::EXP));
     engine.SetFeedbackLPFCutoff(Map0To1Exp(lp_norm, 100.0f, 18000.0f));
     engine.SetFeedbackHPFCutoff(Map0To1Exp(hp_norm, 10.0f, 4000.0f));
-    engine.SetDrive(Map0To1(controls.drive, 0.4f, 1.0f));
+    engine.SetDrive(Map0To1(controls.drive, 0.4f, 0.96f));
     engine.SetFeedbackGain(Map0To1(controls.feedback, -60.0f, 12.0f));
     engine.SetReverbMix(controls.reverb_mix);
     engine.SetReverbFeedback(Map0To1(Tension(controls.reverb_feedback, -3.0f), 0.2f, 1.0f));
