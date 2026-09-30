@@ -23,6 +23,7 @@ class Engine {
     void SetFeedbackLPFCutoff(const float cutoff_hz);
     void SetFeedbackHPFCutoff(const float cutoff_hz);
     void SetDrive(const float drive);
+    void SetExcitationBlend(float blend);
     void SetEchoDelayTime(const float echo_time);
     void SetEchoDelayFeedback(const float echo_fb);
     void SetEchoDelaySendAmount(const float echo_send);
@@ -38,6 +39,7 @@ class Engine {
     float fb_gain_ = 0.0f;
     float echo_send_ = 0.0f;
     float verb_mix_ = 0.0f;
+    float excitation_blend_ = 0.0f;
     float output_level_ = 0.5f;
     float fb_delay_smooth_coef_;
     float fb_delay_samp_ = 1000.f;

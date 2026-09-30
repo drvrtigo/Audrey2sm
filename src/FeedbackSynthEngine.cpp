@@ -31,7 +31,6 @@ void Engine::Init(const float sample_rate) {
   verb_->SetLpFreq(12000.0f);
   fb_lpf_.Init(sample_rate);
   fb_lpf_.SetQ(0.9f);
-  fb_lpf_.SetCutoff(18000.0f);
   fb_hpf_.Init(sample_rate);
   fb_hpf_.SetQ(0.9f);
   fb_hpf_.SetCutoff(60.f);
@@ -57,6 +56,9 @@ void Engine::SetDrive(const float drive) {
   overdrive_[0].SetDrive(safe_drive);
   overdrive_[1].SetDrive(safe_drive);
 }
+void Engine::SetExcitationBlend(float blend) {
+  excitation_blend_ = fclamp(blend, 0.0f, 1.0f);
+}
 void Engine::SetEchoDelayTime(const float echo_time) {
   echo_delay_[0]->SetDelayTime(echo_time);
   echo_delay_[1]->SetDelayTime(echo_time);
@@ -77,8 +79,11 @@ void Engine::Process(float in, float &outL, float &outR) {
   fonepole(fb_delay_samp_, fb_delay_samp_target_, fb_delay_smooth_coef_);
   float inL, inR, sampL, sampR, echoL, echoR, verbL, verbR;
   const float noise_samp = noise_.Process();
-  inL = fb_delayline_[0].Read(fb_delay_samp_) + noise_samp + in;
-  inR = fb_delayline_[1].Read(daisysp::fmax(1.0f, fb_delay_samp_ - 4.f)) + noise_samp + in;
+  const float noise_gain = 1.0f - 0.9f * excitation_blend_;
+  const float input_gain = 0.25f * excitation_blend_;
+  const float excitation = noise_samp * noise_gain + in * input_gain;
+  inL = fb_delayline_[0].Read(fb_delay_samp_) + excitation;
+  inR = fb_delayline_[1].Read(daisysp::fmax(1.0f, fb_delay_samp_ - 4.f)) + excitation;
   sampL = strings_[0].Process(inL);
   sampR = strings_[1].Process(inR);
   sampL = overdrive_[0].Process(sampL);
